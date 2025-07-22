@@ -3,7 +3,7 @@
 #include <HobLib.h>
 
 static SMBIOS_TABLE_ENTRY_POINT    *EntryPoint;     //SmbiosEps original
-static SMBIOS_TABLE_ENTRY_POINT    *SmbiosEpsNew;   //new SmbiosEps
+//static SMBIOS_TABLE_ENTRY_POINT    *SmbiosEpsNew;   //new SmbiosEps
 
 BOOLEAN IsEntryPointStructureValid(IN SMBIOS_TABLE_ENTRY_POINT *EntryPointStructure)
 {
