@@ -11,6 +11,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE In_ImageHandle, EFI_SYSTEM_TABLE *SystemTa
     InitializeLib(In_ImageHandle, SystemTable);
     ImageHandle = In_ImageHandle;
 
+    uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+
     Print(L"[Spoofer] Initialization complete.\n");
     Print(L"[Spoofer] Searching for SMBIO Entry Point\n");
 
