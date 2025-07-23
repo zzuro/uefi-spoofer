@@ -1,30 +1,47 @@
 #include <random.h>
 #include <blockio.h>
 
-UINT8 pseudo_random_byte()
+
+static UINT8 pseudo_random_byte_fallback()
 {
     EFI_TIME Time;
     EFI_STATUS Status;
-    UINT64 seed = 0;
 
     Status = uefi_call_wrapper(RT->GetTime, 2, &Time, NULL);
-    if (!EFI_ERROR(Status)) {
-        seed ^= (UINT64)Time.Second |
-                ((UINT64)Time.Minute << 8) |
-                ((UINT64)Time.Hour << 16) |
-                ((UINT64)Time.Day << 24) |
-                ((UINT64)Time.Month << 32) |
-                ((UINT64)Time.Year << 40);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to get time: %r\n", Status);
+        return 0;
     }
 
-    for (int i = 0; i < 10000; i++) {
-        UINT64 t;
-        uefi_call_wrapper(BS->Stall, 1, 1); 
-        uefi_call_wrapper(BS->GetNextMonotonicCount, 1, &t);
-        seed ^= t ^ (seed << 5) ^ (seed >> 3);
+    UINT64 seed = (UINT64)Time.Second |
+                 ((UINT64)Time.Minute << 8) |
+                 ((UINT64)Time.Hour << 16) |
+                 ((UINT64)Time.Day << 24) |
+                 ((UINT64)Time.Month << 32) |
+                 ((UINT64)Time.Year << 40);
+
+    return (UINT8)(seed ^ (seed >> 11) ^ (seed >> 19) ^ (seed >> 27));
+}
+
+UINT8 pseudo_random_byte()
+{
+    EFI_GUID rngProto = EFI_RNG_PROTOCOL_GUID;
+    EFI_RNG_PROTOCOL *rng;
+    EFI_STATUS Status = uefi_call_wrapper(BS->LocateProtocol, 3, &rngProto, NULL, (void**)&rng);
+
+    if (EFI_ERROR(Status)) {
+        Print(L"EFI_RNG_PROTOCOL is NOT available.\n");
+        return pseudo_random_byte_fallback();
     }
 
-    return (UINT8)(seed ^ (seed >> 11) ^ (seed >> 19));
+    UINT8 rand;
+    Status = uefi_call_wrapper(rng->GetRNG, 3, rng, NULL, sizeof(rand), &rand);
+    if (EFI_ERROR(Status)) {
+        Print(L"Failed to get random byte: %r\n", Status);
+        return pseudo_random_byte_fallback();
+    }
+
+    return rand;
 }
 
 
