@@ -7,21 +7,39 @@ static UINT8 pseudo_random_byte_fallback()
     EFI_TIME Time;
     EFI_STATUS Status;
 
+    static int lastRandom = 0;
+
     Status = uefi_call_wrapper(RT->GetTime, 2, &Time, NULL);
     if (EFI_ERROR(Status)) {
         Print(L"Failed to get time: %r\n", Status);
         return 0;
     }
 
-    UINT64 seed = (UINT64)Time.Second |
-                 ((UINT64)Time.Minute << 8) |
-                 ((UINT64)Time.Hour << 16) |
-                 ((UINT64)Time.Day << 24) |
-                 ((UINT64)Time.Month << 32) |
-                 ((UINT64)Time.Year << 40);
+    if (lastRandom == 0) 
+    {
+        lastRandom = Time.Day + Time.Hour + Time.Minute + Time.Second + Time.Nanosecond;
+    }
+    
+    lastRandom += Time.Minute;
 
-    return (UINT8)(seed ^ (seed >> 11) ^ (seed >> 19) ^ (seed >> 27));
+
+    return lastRandom % 256; 
 }
+
+VOID random_string(CHAR8* str, CONST UINTN length)
+{
+    if (str == NULL || length == 0) {
+        return;
+    }
+
+    for (UINTN i = 0; i < length - 1; i++) {
+        str[i] = pseudo_random_byte();
+    }
+    
+    str[length - 1] = '\0'; 
+}
+
+
 
 UINT8 pseudo_random_byte()
 {
@@ -30,14 +48,12 @@ UINT8 pseudo_random_byte()
     EFI_STATUS Status = uefi_call_wrapper(BS->LocateProtocol, 3, &rngProto, NULL, (void**)&rng);
 
     if (EFI_ERROR(Status)) {
-        Print(L"EFI_RNG_PROTOCOL is NOT available.\n");
         return pseudo_random_byte_fallback();
     }
 
     UINT8 rand;
     Status = uefi_call_wrapper(rng->GetRNG, 3, rng, NULL, sizeof(rand), &rand);
     if (EFI_ERROR(Status)) {
-        Print(L"Failed to get random byte: %r\n", Status);
         return pseudo_random_byte_fallback();
     }
 

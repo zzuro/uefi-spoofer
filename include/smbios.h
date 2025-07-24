@@ -45,6 +45,13 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 //
 #define SMBIOS_3_0_TABLE_MAX_LENGTH 0xFFFFFFFF
 
+#define ROUND_PAGE(x)                ((((unsigned)(x)) + EFI_PAGE_SIZE - 1) & ~(EFI_PAGE_SIZE - 1))
+
+#define MAX_TABLE_SIZE    512
+
+#define MAX_OEM_STRING            256
+
+
 //
 // SMBIOS type macros which is according to SMBIOS 2.7 specification.
 //

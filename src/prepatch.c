@@ -1,9 +1,16 @@
 #include <prepatch.h>
 #include <PiHob.h>
 #include <HobLib.h>
+#include <crc32.h>
+#include <random.h>
 
-static SMBIOS_TABLE_ENTRY_POINT    *EntryPoint;     //SmbiosEps original
-//static SMBIOS_TABLE_ENTRY_POINT    *SmbiosEpsNew;   //new SmbiosEps
+static SMBIOS_TABLE_ENTRY_POINT *Smbios;
+static SMBIOS_TABLE_ENTRY_POINT *EntryPoint;
+static SMBIOS_TABLE_ENTRY_POINT *SmbiosEpsNew; // new SmbiosEps
+static UINT8 *current;                         // pointer to the current end of tables
+static SMBIOS_STRUCTURE_POINTER newSmbiosTable;
+static UINT16 NumberOfRecords;
+static UINT16 MaxStructureSize;
 
 BOOLEAN IsEntryPointStructureValid(IN SMBIOS_TABLE_ENTRY_POINT *EntryPointStructure)
 {
@@ -107,16 +114,403 @@ VOID *FindSmbios(VOID)
     return SmbiosEntryPoint;
 }
 
-
-EFI_STATUS PrepatchSmbios(VOID* SmbiosEntryPoint)
+UINT16 SmbiosTableLength(SMBIOS_STRUCTURE_POINTER SmbiosTable)
 {
+    CHAR8 *AChar;
+    UINT16 Length;
+
+    AChar = (CHAR8 *)(SmbiosTable.Raw + SmbiosTable.Hdr->Length);
+    while ((*AChar != 0) || (*(AChar + 1) != 0))
+    { // area is /0/0 terminated
+        AChar++;
+    }
+    Length = (UINT16)((UINTN)AChar - (UINTN)SmbiosTable.Raw + 2); // +2 for the /0/0 termination
+    return Length;
+}
+
+CHAR8 *GetSmbiosString(SMBIOS_STRUCTURE_POINTER SmbiosTableN, SMBIOS_TABLE_STRING StringN)
+{
+    CHAR8 *AString;
+    UINT8 Ind;
+
+    Ind = 1;
+    AString = (CHAR8 *)(SmbiosTableN.Raw + SmbiosTableN.Hdr->Length); // first string
+    while (Ind != StringN)
+    {
+        while (*AString != 0)
+        {
+            AString++;
+        }
+        AString++; // skip zero ending
+        if (*AString == 0)
+        {
+            return AString; // this is end of the table
+        }
+        Ind++;
+    }
+
+    return AString; // return pointer to Ascii string
+}
+
+EFI_STATUS UpdateSmbiosString(OUT SMBIOS_STRUCTURE_POINTER SmbiosTableN,
+                              SMBIOS_STRING *Field, IN CONST CHAR8 *Buffer)
+{
+    CHAR8 *AString;
+    CHAR8 *C1;
+    CHAR8 *C2;
+    UINTN Length = SmbiosTableLength(SmbiosTableN);
+    UINTN ALength, BLength;
+    UINT8 IndexStr = 1;
+
+    if ((SmbiosTableN.Raw == NULL) || !Buffer || !Field)
+    {
+        return EFI_NOT_FOUND;
+    }
+
+    AString = (CHAR8 *)(SmbiosTableN.Raw + SmbiosTableN.Hdr->Length); // first string
+    while (IndexStr != *Field)
+    {
+        if (*AString)
+        {
+            IndexStr++;
+        }
+        while (*AString != 0)
+            AString++; // skip string at index
+        AString++;     // next string
+        if (*AString == 0)
+        {
+            // this is end of the table
+            if (*Field == 0)
+            {
+                AString[1] = 0; // one more zero
+            }
+            *Field = IndexStr; // index of the next string that  is empty
+            if (IndexStr == 1)
+            {
+                AString--; // first string has no leading zero
+            }
+            break;
+        }
+    }
+
+    // AString is at place to copy
+    ALength = iStrLen(AString, 0);
+    BLength = iStrLen(Buffer, MAX_OEM_STRING);
+
+    if (BLength > ALength)
+    {
+        // Shift right
+        C1 = (CHAR8 *)SmbiosTableN.Raw + Length; // old end
+        C2 = C1 + BLength - ALength;             // new end
+        *C2 = 0;
+        while (C1 != AString)
+            *(--C2) = *(--C1);
+    }
+    else if (BLength < ALength)
+    {
+        // Shift left
+        C1 = AString + ALength; // old start
+        C2 = AString + BLength; // new start
+        while (C1 != ((CHAR8 *)SmbiosTableN.Raw + Length))
+        {
+            *C2++ = *C1++;
+        }
+        *C2 = 0;
+        *(--C2) = 0; // end of table
+    }
+    CopyMem(AString, Buffer, BLength);
+    *(AString + BLength) = 0; // not sure there is 0
+
+    return EFI_SUCCESS;
+}
+
+UINTN iStrLen(CONST CHAR8 *String, UINTN MaxLen)
+{
+    UINTN Len = 0;
+    CONST CHAR8 *BA;
+    if (MaxLen > 0)
+    {
+        for (Len = 0; Len < MaxLen; Len++)
+        {
+            if (String[Len] == 0)
+            {
+                break;
+            }
+        }
+        BA = &String[Len - 1];
+        while ((Len != 0) && ((*BA == ' ') || (*BA == 0)))
+        {
+            BA--;
+            Len--;
+        }
+    }
+    else
+    {
+        BA = String;
+        while (*BA)
+        {
+            BA++;
+            Len++;
+        }
+    }
+    return Len;
+}
+
+CHAR16 *
+AsciiToUnicode(
+    IN CONST CHAR8 *AsciiString)
+{
+    UINTN Length = iStrLen(AsciiString, 0);
+    CHAR16 *UnicodeString = AllocateZeroPool((Length + 1) * sizeof(CHAR16));
+    if (UnicodeString == NULL)
+    {
+        return NULL;
+    }
+
+    for (UINTN i = 0; i < Length; i++)
+    {
+        UnicodeString[i] = (CHAR16)AsciiString[i];
+    }
+
+    return UnicodeString;
+}
+
+SMBIOS_STRUCTURE_POINTER GetSmbiosTableFromType(SMBIOS_TABLE_ENTRY_POINT *SmbiosPoint, UINT8 SmbiosType, UINTN IndexTable)
+{
+    SMBIOS_STRUCTURE_POINTER SmbiosTable;
+    UINTN SmbiosTypeIndex = 0;
+
+    SmbiosTable.Raw = (UINT8 *)(UINTN)SmbiosPoint->TableAddress;
+    if (SmbiosTable.Raw == NULL)
+    {
+        return SmbiosTable;
+    }
+
+    while ((SmbiosTypeIndex != IndexTable) || (SmbiosTable.Hdr->Type != SmbiosType))
+    {
+        if (SmbiosTable.Hdr->Type == SMBIOS_TYPE_END_OF_TABLE)
+        {
+            SmbiosTable.Raw = NULL;
+            return SmbiosTable;
+        }
+
+        if (SmbiosTable.Hdr->Type == SmbiosType)
+        {
+            SmbiosTypeIndex++;
+        }
+
+        SmbiosTable.Raw = (UINT8 *)(SmbiosTable.Raw + SmbiosTableLength(SmbiosTable));
+    }
+
+
+    return SmbiosTable;
+}
+
+VOID LogSmbiosTable (SMBIOS_STRUCTURE_POINTER SmbiosTableN)
+{
+    UINT16  Length = SmbiosTableLength(SmbiosTableN);
+    if(Length > MaxStructureSize)
+    {
+        MaxStructureSize = Length;
+    }
+
+    CopyMem(current, SmbiosTableN.Raw, Length);
+    current += Length;
+    NumberOfRecords++;
+}
+
+EFI_STATUS PrepatchSmbios(VOID *SmbiosEntryPoint)
+{
+    EFI_STATUS Status = EFI_SUCCESS;
+    UINTN BufferLen;
     if (!SmbiosEntryPoint)
     {
         return EFI_NOT_FOUND;
     }
 
     EntryPoint = (SMBIOS_TABLE_ENTRY_POINT *)SmbiosEntryPoint;
-    Print(L"[Spoofer] Found SMBIOS Entry Point at: 0x%08x\n", EntryPoint->TableAddress);
+    BufferLen = 0x20 + Smbios->TableLength + 64 * 10;
 
-    return EFI_SUCCESS;
+    // TODO: AllocateAnyPages -> AllocateMaxAddress
+    Status = uefi_call_wrapper(BS->AllocatePages, 4, AllocateAnyPages, EfiACPIReclaimMemory, EFI_SIZE_TO_PAGES(BufferLen), (EFI_PHYSICAL_ADDRESS *)&SmbiosEpsNew);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to allocate memory for new SMBIOS Entry Point: %r", Status);
+        return Status;
+    }
+
+    ZeroMem(SmbiosEpsNew, BufferLen);
+    NumberOfRecords = 0;
+    MaxStructureSize = 0;
+    CopyMem((VOID *)SmbiosEpsNew, (VOID *)Smbios, sizeof(SMBIOS_TABLE_ENTRY_POINT));
+
+    Smbios = (VOID *)(SmbiosEpsNew + 1); //put tables after the entry point structure
+    current = (UINT8 *)Smbios;
+    SmbiosEpsNew->TableAddress = (UINT32)(UINTN)current;
+    SmbiosEpsNew->EntryPointLength = sizeof(SMBIOS_TABLE_ENTRY_POINT);
+
+    return Status;
+}
+
+VOID edit_random_string(OUT SMBIOS_STRUCTURE_POINTER SmbiosTableN, SMBIOS_STRING *Field)
+{
+    CHAR8 *RandomString = AllocateZeroPool(MAX_OEM_STRING);
+    if (RandomString == NULL)
+    {
+        Print(L"[Spoofer] Failed to allocate memory for random string.\n");
+        return;
+    }
+
+    random_string(RandomString, MAX_OEM_STRING);
+    EFI_STATUS Status = UpdateSmbiosString(SmbiosTableN, Field, RandomString);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to update SMBIOS string: %r\n", Status);
+    }
+
+    FreePool(RandomString);
+}
+
+EFI_STATUS PatchAll()
+{
+    EFI_STATUS Status = EFI_SUCCESS;
+    newSmbiosTable.Raw = (UINT8 *)AllocateZeroPool(MAX_TABLE_SIZE);
+    Status = PatchTableType0();
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to patch SMBIOS Type 0 table\n");
+        return Status;
+    }
+
+    Status = PatchTableType1();
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to patch SMBIOS Type 1 table\n");
+    }
+
+    Status = PatchTableType2();
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to patch SMBIOS Type 2 table\n");
+    }
+
+    Status = PatchTableType3();
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to patch SMBIOS Type 3 table\n");
+    }
+    
+    SmbiosEpsNew->TableLength = (UINT16)((UINT32)(UINTN)current - (UINT32)(UINTN)Smbios);
+    SmbiosEpsNew->NumberOfSmbiosStructures = NumberOfRecords;
+    SmbiosEpsNew->IntermediateChecksum = 0;
+    SmbiosEpsNew->IntermediateChecksum = (UINT8)(256 - Checksum8((UINT8*)SmbiosEpsNew + 0x10, SmbiosEpsNew->EntryPointLength - 0x10));
+    SmbiosEpsNew->EntryPointStructureChecksum = 0;
+    SmbiosEpsNew->EntryPointStructureChecksum = (UINT8)(256 - Checksum8((UINT8*)SmbiosEpsNew, SmbiosEpsNew->EntryPointLength));
+
+    ST->Hdr.CRC32 = 0;
+    Status = uefi_call_wrapper(BS->CalculateCrc32, 3, (UINT8 *)&ST->Hdr, ST->Hdr.HeaderSize, &ST->Hdr.CRC32);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to calculate CRC32: %r", Status);
+        return Status;
+    }
+
+    Status = uefi_call_wrapper(BS->InstallConfigurationTable, 1, &gEfiSmbiosTableGuid, SmbiosEpsNew);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to install SMBIOS configuration table: %r", Status);
+        return Status;
+    }
+
+    FreePool((VOID *)newSmbiosTable.Raw);
+    return Status;
+}
+
+EFI_STATUS PatchTableType0()
+{
+    EFI_STATUS Status = EFI_SUCCESS;
+    SMBIOS_STRUCTURE_POINTER SmbiosTable = GetSmbiosTableFromType(EntryPoint, SMBIOS_TYPE_BIOS_INFORMATION, 0);
+    if (SmbiosTable.Raw == NULL || SmbiosTable.Hdr->Type != SMBIOS_TYPE_BIOS_INFORMATION)
+    {
+        Print(L"SMBIOS Type 0 table not found.\n");
+        return EFI_NOT_FOUND;
+    }
+
+
+    ZeroMem((VOID*)newSmbiosTable.Type0, MAX_TABLE_SIZE);
+    CopyMem((VOID*)newSmbiosTable.Type0, (VOID*)SmbiosTable.Type0, SmbiosTableLength(SmbiosTable));
+
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type0->Vendor);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type0->BiosVersion);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type0->BiosReleaseDate);
+
+    LogSmbiosTable(newSmbiosTable);
+    
+    return Status;
+}
+
+EFI_STATUS PatchTableType1()
+{
+    EFI_STATUS Status = EFI_SUCCESS;
+    SMBIOS_STRUCTURE_POINTER SmbiosTable = GetSmbiosTableFromType(EntryPoint, SMBIOS_TYPE_SYSTEM_INFORMATION, 0);
+    if (SmbiosTable.Raw == NULL || SmbiosTable.Hdr->Type != SMBIOS_TYPE_SYSTEM_INFORMATION)
+    {
+        Print(L"SMBIOS Type 1 table not found.\n");
+        return EFI_NOT_FOUND;
+    }
+
+    ZeroMem((VOID*)newSmbiosTable.Type1, MAX_TABLE_SIZE);
+    CopyMem((VOID*)newSmbiosTable.Type1, (VOID*)SmbiosTable.Type1, SmbiosTableLength(SmbiosTable));
+
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type1->Manufacturer);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type1->ProductName);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type1->Version);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type1->SerialNumber);
+
+    LogSmbiosTable(newSmbiosTable);
+    return Status;
+}
+
+EFI_STATUS PatchTableType2()
+{
+    EFI_STATUS Status = EFI_SUCCESS;
+    SMBIOS_STRUCTURE_POINTER SmbiosTable = GetSmbiosTableFromType(EntryPoint, SMBIOS_TYPE_BASEBOARD_INFORMATION, 0);
+    if (SmbiosTable.Raw == NULL || SmbiosTable.Hdr->Type != SMBIOS_TYPE_BASEBOARD_INFORMATION)
+    {
+        Print(L"SMBIOS Type 2 table not found.\n");
+        return EFI_NOT_FOUND;
+    }
+
+    ZeroMem((VOID*)newSmbiosTable.Type2, MAX_TABLE_SIZE);
+    CopyMem((VOID*)newSmbiosTable.Type2, (VOID*)SmbiosTable.Type2, SmbiosTableLength(SmbiosTable));
+
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type2->Manufacturer);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type2->ProductName);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type2->Version);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type2->SerialNumber);
+    
+    LogSmbiosTable(newSmbiosTable);
+    return Status;
+}
+
+EFI_STATUS PatchTableType3()
+{
+    EFI_STATUS Status = EFI_SUCCESS;
+    SMBIOS_STRUCTURE_POINTER SmbiosTable = GetSmbiosTableFromType(EntryPoint, SMBIOS_TYPE_SYSTEM_ENCLOSURE, 0);
+    if (SmbiosTable.Raw == NULL || SmbiosTable.Hdr->Type != SMBIOS_TYPE_SYSTEM_ENCLOSURE)
+    {
+        Print(L"SMBIOS Type 3 table not found.\n");
+        return EFI_NOT_FOUND;
+    }
+
+    ZeroMem((VOID*)newSmbiosTable.Type3, MAX_TABLE_SIZE);
+    CopyMem((VOID*)newSmbiosTable.Type3, (VOID*)SmbiosTable.Type3, SmbiosTableLength(SmbiosTable));
+
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type3->Manufacturer);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type3->Version);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type3->SerialNumber);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type3->AssetTag);
+
+    LogSmbiosTable(newSmbiosTable);
+    return Status;
 }

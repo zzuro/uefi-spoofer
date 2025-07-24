@@ -22,20 +22,24 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE In_ImageHandle, EFI_SYSTEM_TABLE *SystemTa
         return EFI_NOT_FOUND;
     }
 
-    Print(L"[Spoofer] SMBIOS Entry Point found at: 0x%08x\n", SmbiosEntryPoint);
+    //Status = spoof_partition();
+    //if (EFI_ERROR(Status)) {
+    //    Print(L"[Spoofer] Failed to print partition information\n");
+    //    return Status;
+    //}
 
     Status = PrepatchSmbios(SmbiosEntryPoint);
     if (EFI_ERROR(Status)) {
-        Print(L"[Spoofer] Failed to prepatch SMBIOS");
+        Print(L"[Spoofer] Failed to prepatch SMBIOS\n");
         return Status;
     }
 
-    Status = spoof_partition();
+    Status = PatchAll();
     if (EFI_ERROR(Status)) {
-        Print(L"[Spoofer] Failed to print partition information\n");
-        return Status;
+        Print(L"[Spoofer] Failed to patch SMBIOS tables\n");    
     }
 
+    Print(L"[Spoofer] Patching complete.\n");
 
     return Status;
 }

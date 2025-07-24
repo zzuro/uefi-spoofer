@@ -40,3 +40,12 @@ UINT32 crc32(UINT8 *buf, UINT64 len)
     return c ^ 0xFFFFFFFFL;
 }
 
+UINT8 Checksum8(void* startPtr, UINT32 len)
+{
+  UINT8 Value = 0;
+  UINT8 *ptr = (UINT8*)startPtr;
+  UINT8 *endPtr = ptr + len;
+  while (ptr < endPtr)
+    Value += *ptr++;
+  return Value;
+}
