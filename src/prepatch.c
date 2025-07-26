@@ -364,7 +364,6 @@ EFI_STATUS PrepatchSmbios(VOID *SmbiosEntryPoint)
     current = (UINT8 *)Smbios;
     SmbiosEpsNew->TableAddress = (UINT32)(UINTN)current;
     SmbiosEpsNew->EntryPointLength = sizeof(SMBIOS_TABLE_ENTRY_POINT);
-
     return Status;
 }
 
