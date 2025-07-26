@@ -22,12 +22,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE In_ImageHandle, EFI_SYSTEM_TABLE *SystemTa
         return EFI_NOT_FOUND;
     }
 
-    //Status = spoof_partition();
-    //if (EFI_ERROR(Status)) {
-    //    Print(L"[Spoofer] Failed to print partition information\n");
-    //    return Status;
-    //}
-
     Status = PrepatchSmbios(SmbiosEntryPoint);
     if (EFI_ERROR(Status)) {
         Print(L"[Spoofer] Failed to prepatch SMBIOS\n");

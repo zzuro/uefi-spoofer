@@ -6,6 +6,8 @@
 #define SMBIOS_START_ADDRESS 0xF0000
 #define SMBIOS_END_ADDRESS   0xFFFFF
 
+#define EFI_SYSTEM_TABLE_MAX_ADDRESS 0xFFFFFFFF
+
 #define SMBIOS_PTR        EFI_SIGNATURE_32('_','S','M','_')
 
 // Find the SMBIOS entry point structure
@@ -27,6 +29,7 @@ CHAR16 *AsciiToUnicode(IN CONST CHAR8 *AsciiString);
 
 VOID* FindSmbios(VOID);
 EFI_STATUS PrepatchSmbios(VOID* SmbiosEntryPoint);
+VOID AddSmbiosEndOfTable();
 
 VOID edit_random_string(OUT SMBIOS_STRUCTURE_POINTER SmbiosTableN, SMBIOS_STRING *Field);
 VOID LogSmbiosTable (SMBIOS_STRUCTURE_POINTER SmbiosTableN);
@@ -38,3 +41,4 @@ EFI_STATUS PatchTableType2();
 EFI_STATUS PatchTableType3();
 
 
+EFI_STATUS CopyTable(UINT8 SmbiosType);

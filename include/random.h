@@ -16,5 +16,5 @@ typedef struct
 
 
 EFI_STATUS spoof_GUID(GUID *guid);
-UINT8 pseudo_random_byte();
+UINT8 pseudo_random_byte(UINT8 l, UINT8 h);
 VOID random_string(CHAR8* str, CONST UINTN length);
