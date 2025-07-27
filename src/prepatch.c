@@ -415,6 +415,12 @@ EFI_STATUS PatchAll()
         Print(L"[Spoofer] Failed to patch SMBIOS Type 3 table\n");
     }
 
+    Status = PatchTableType4();
+    if (EFI_ERROR(Status))
+    {
+        Print(L"[Spoofer] Failed to patch SMBIOS Type 4 table\n");
+    }
+
     AddSmbiosEndOfTable();
 
     SmbiosEpsNew->TableLength = (UINT16)((UINT32)(UINTN)current - (UINT32)(UINTN)Smbios);
@@ -576,6 +582,31 @@ EFI_STATUS PatchTableType3()
     edit_random_string(newSmbiosTable, &newSmbiosTable.Type3->Version);
     edit_random_string(newSmbiosTable, &newSmbiosTable.Type3->SerialNumber);
     edit_random_string(newSmbiosTable, &newSmbiosTable.Type3->AssetTag);
+
+    LogSmbiosTable(newSmbiosTable);
+    return Status;
+}
+
+EFI_STATUS PatchTableType4()
+{
+    EFI_STATUS Status = EFI_SUCCESS;
+    SMBIOS_STRUCTURE_POINTER SmbiosTable = GetSmbiosTableFromType(EntryPoint, SMBIOS_TYPE_PROCESSOR_INFORMATION, 0);
+    if (SmbiosTable.Raw == NULL || SmbiosTable.Hdr->Type != SMBIOS_TYPE_PROCESSOR_INFORMATION)
+    {
+        Print(L"SMBIOS Type 4 table not found.\n");
+        return EFI_NOT_FOUND;
+    }
+
+    ZeroMem((VOID *)newSmbiosTable.Type4, MAX_TABLE_SIZE);
+    CopyMem((VOID *)newSmbiosTable.Type4, (VOID *)SmbiosTable.Type4, SmbiosTableLength(SmbiosTable));
+
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type4->ProcessorManufacture);
+    edit_random_string(newSmbiosTable, &newSmbiosTable.Type4->ProcessorVersion);
+    
+    for(UINTN i = 0; i < 8; i++)
+    {
+        newSmbiosTable.Type4->ProcessorId[i] = (UINTN)pseudo_random_byte(0, 255);
+    }
 
     LogSmbiosTable(newSmbiosTable);
     return Status;

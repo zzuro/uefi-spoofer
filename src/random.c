@@ -25,7 +25,7 @@ static UINT8 pseudo_random_byte_fallback(UINT8 l, UINT8 h)
                    Time.Hour * 100 + Time.Day + Time.Nanosecond);
     lastRandom = (lastRandom * 1103515245 + 12345) & 0x7fffffff; 
 
-    UINT8 range = h - l + 1;  
+    UINT16 range = (UINT16)h - (UINT16)l + 1;
     UINT8 num = (UINT8)(lastRandom % range);
 
     return (UINT8)(num + l);
@@ -63,7 +63,7 @@ UINT8 pseudo_random_byte(UINT8 l, UINT8 h)
         return pseudo_random_byte_fallback(l, h);
     }
 
-    UINT8 range = h - l + 1;  
+    UINT16 range = (UINT16)h - (UINT16)l + 1;
     UINT8 num = (UINT8)(rand % range);
 
     return (UINT8)(num + l);

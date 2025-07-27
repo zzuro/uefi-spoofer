@@ -39,6 +39,7 @@ EFI_STATUS PatchTableType0();
 EFI_STATUS PatchTableType1();
 EFI_STATUS PatchTableType2();
 EFI_STATUS PatchTableType3();
+EFI_STATUS PatchTableType4();
 
 
 EFI_STATUS CopyTable(UINT8 SmbiosType);
